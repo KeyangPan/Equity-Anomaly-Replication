@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets and data (never commit)
+.env
+data/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
