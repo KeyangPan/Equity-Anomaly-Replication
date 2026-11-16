@@ -82,3 +82,13 @@ def summarize(returns: pd.Series) -> pd.Series:
             "max drawdown %": 100 * max_drawdown(returns),
         }
     )
+
+
+def market_beta(returns: pd.Series, market_returns: pd.Series) -> float:
+    """Slope of a regression of a monthly return series on the market's monthly excess return.
+
+    beta = cov(r, MKT) / var(MKT), over the months where both exist.
+    A market-neutral portfolio has a beta close to 0.
+    """
+    both = pd.concat([returns, market_returns], axis=1, keys=["portfolio", "market"]).dropna()
+    return both["portfolio"].cov(both["market"]) / both["market"].var()

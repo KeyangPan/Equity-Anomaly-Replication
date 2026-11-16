@@ -3,11 +3,16 @@
 Usage:
     uv run python -m anomaly_replication.backtest
 
+Every signal is tested in two versions:
+    raw       the score as defined in the paper
+    neutral   the score after removing its sector and market-beta part (see neutralize.py)
+
 Writes to results/:
-    summary.csv               one row per (signal, universe): mean, t-stat, Sharpe, max drawdown
-    long_short_returns.csv    monthly long-short return of every (signal, universe)
-    decile_mean_returns.csv   average monthly return of each of the 10 groups
-    cumulative_returns.png    growth of $1 in each long-short portfolio
+    summary.csv                      one row per (version, signal, universe): mean, t-stat, Sharpe, ...
+    long_short_returns.csv           monthly long-short return of every (version, signal, universe)
+    decile_mean_returns.csv          average monthly return of each of the 10 groups
+    cumulative_returns.png           growth of $1 in each raw long-short portfolio
+    cumulative_returns_neutral.png   the same for the neutral version
 
 All returns are before transaction costs.
 """
@@ -19,8 +24,14 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from anomaly_replication.loader import PROJECT_DIR, load_table
-from anomaly_replication.portfolio import sort_into_portfolios, summarize
-from anomaly_replication.returns import build_daily_returns, build_monthly_prices, build_monthly_returns
+from anomaly_replication.neutralize import estimate_betas, load_sectors, neutralize
+from anomaly_replication.portfolio import market_beta, sort_into_portfolios, summarize
+from anomaly_replication.returns import (
+    build_daily_returns,
+    build_monthly_market_returns,
+    build_monthly_prices,
+    build_monthly_returns,
+)
 from anomaly_replication.signals import low_volatility, momentum, post_earnings_drift, short_term_reversal
 from anomaly_replication.universe import build_universe
 
@@ -38,37 +49,49 @@ SIGNAL_COLORS = {
 }
 
 
-def build_signals(universe: pd.DataFrame, monthly_prices: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """Compute the score table of every signal."""
+def run_backtest() -> dict[tuple[str, str, str], pd.DataFrame]:
+    """Return the decile portfolio returns of every (version, signal, universe)."""
+    universe = build_universe(n_stocks=3000)
+    monthly_prices = build_monthly_prices()
+    monthly_returns = build_monthly_returns(monthly_prices)
     daily_returns = build_daily_returns(universe["ticker"].unique())
     factors = load_table("french_factors_daily")
-    return {
+
+    signals = {
         "momentum": momentum(monthly_prices),
         "short_term_reversal": short_term_reversal(monthly_prices),
         "low_volatility": low_volatility(daily_returns, factors),
         "post_earnings_drift": post_earnings_drift(monthly_prices.index),
     }
-
-
-def run_backtest() -> dict[tuple[str, str], pd.DataFrame]:
-    """Return the decile portfolio returns of every (signal, universe) pair."""
-    universe = build_universe(n_stocks=3000)
-    monthly_prices = build_monthly_prices()
-    monthly_returns = build_monthly_returns(monthly_prices)
-    signals = build_signals(universe, monthly_prices)
+    sectors = load_sectors()
+    betas = estimate_betas(daily_returns, factors, monthly_prices.index)
 
     portfolios = {}
     for signal_name, signal in signals.items():
         for universe_name, n_stocks in UNIVERSE_SIZES.items():
             # rank 1 is the largest stock, so rank <= 500 is the top 500 by market cap.
             sub_universe = universe[universe["rank"] <= n_stocks]
-            portfolios[(signal_name, universe_name)] = sort_into_portfolios(signal, sub_universe, monthly_returns)
+            # Neutralize inside the universe we trade: the regression uses only its stocks.
+            neutral_signal = neutralize(signal, sub_universe, sectors, betas)
+
+            key = (signal_name, universe_name)
+            portfolios[("raw", *key)] = sort_into_portfolios(signal, sub_universe, monthly_returns)
+            portfolios[("neutral", *key)] = sort_into_portfolios(neutral_signal, sub_universe, monthly_returns)
     return portfolios
 
 
-def plot_cumulative_returns(long_short: pd.DataFrame, path=None) -> None:
-    """Plot the growth of $1 in each long-short portfolio, one panel per universe.
+def build_summary(long_short: pd.DataFrame) -> pd.DataFrame:
+    """Summary statistics of every long-short portfolio, plus its beta to the market."""
+    market_returns = build_monthly_market_returns(load_table("french_factors_daily"))
+    summary = pd.DataFrame({key: summarize(returns) for key, returns in long_short.items()}).T
+    summary["market beta"] = [market_beta(returns, market_returns) for _, returns in long_short.items()]
+    return summary
 
+
+def plot_cumulative_returns(long_short: pd.DataFrame, version: str, path=None) -> None:
+    """Plot the growth of $1 in each long-short portfolio of one version, one panel per universe.
+
+    `long_short` has columns (signal, universe). `version` ("raw" or "neutral") goes in the title.
     With `path` the chart is saved to that file; without it the chart is shown (in a notebook).
     """
     figure, axes = plt.subplots(1, len(UNIVERSE_SIZES), figsize=(13, 5), sharey=True)
@@ -88,7 +111,8 @@ def plot_cumulative_returns(long_short: pd.DataFrame, path=None) -> None:
         axis.tick_params(length=0, labelsize=9)
     axes[0].legend(frameon=False, fontsize=9, loc="upper left")
     figure.suptitle(
-        "Growth of $1 in each long-short portfolio (top decile minus bottom decile, equal-weighted, before costs)",
+        f"Growth of $1 in each long-short portfolio, {version} signals "
+        "(top decile minus bottom decile, equal-weighted, before costs)",
         x=0.01, ha="left", fontsize=12,
     )
     figure.tight_layout()
@@ -104,13 +128,16 @@ if __name__ == "__main__":
     portfolios = run_backtest()
 
     long_short = pd.DataFrame({key: table["long_short"] for key, table in portfolios.items()})
-    summary = pd.DataFrame({key: summarize(returns) for key, returns in long_short.items()}).T
-    decile_means = pd.DataFrame({key: 100 * table.mean() for key, table in portfolios.items()}).T
+    summary = build_summary(long_short)
+    decile_means = pd.DataFrame(
+        {key: 100 * table.drop(columns="long_short").mean() for key, table in portfolios.items()}
+    ).T
 
     long_short.to_csv(RESULTS_DIR / "long_short_returns.csv")
     summary.to_csv(RESULTS_DIR / "summary.csv")
     decile_means.to_csv(RESULTS_DIR / "decile_mean_returns.csv")
-    plot_cumulative_returns(long_short, RESULTS_DIR / "cumulative_returns.png")
+    plot_cumulative_returns(long_short["raw"], "raw", RESULTS_DIR / "cumulative_returns.png")
+    plot_cumulative_returns(long_short["neutral"], "neutral", RESULTS_DIR / "cumulative_returns_neutral.png")
 
     pd.set_option("display.width", 200)
     print("Long-short portfolios (top decile minus bottom decile, equal-weighted, before costs):")

@@ -41,3 +41,21 @@ def build_daily_returns(tickers: list[str]) -> pd.DataFrame:
     prices = prices[prices["ticker"].isin(tickers)]
     daily_prices = prices.pivot(index="date", columns="ticker", values="closeadj")
     return daily_prices / daily_prices.shift(1) - 1
+
+
+def build_monthly_market_returns(factors: pd.DataFrame) -> pd.Series:
+    """Return the market's monthly excess return (index: month-end date), from the daily factors.
+
+    Daily market return = Mkt-RF + RF. We compound the market and the risk-free rate
+    over each month and take the difference.
+    """
+    month_of_date = factors.index.to_period("M")
+    market = (1 + factors["Mkt-RF"] + factors["RF"]).groupby(month_of_date).prod() - 1
+    risk_free = (1 + factors["RF"]).groupby(month_of_date).prod() - 1
+    excess = market - risk_free
+
+    # Label each month by its last trading day, like the other monthly tables.
+    month_end_date = factors.index.to_series().groupby(month_of_date).max()
+    excess.index = excess.index.map(month_end_date)
+    excess.index.name = "date"
+    return excess
