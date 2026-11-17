@@ -15,3 +15,6 @@ data/
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+
+# macOS Finder files
+.DS_Store
