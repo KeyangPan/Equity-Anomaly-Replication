@@ -26,12 +26,36 @@ Work in progress. Transaction costs are not included yet.
 - **Data**: prices, market caps, fundamentals and 8-K dates from Sharadar; daily factors from the
   Ken French data library.
 
+## Data range
+
+Downloaded on 2026-11-15.
+
+| Data | Source | First date | Last date |
+|---|---|---|---|
+| Daily prices | Sharadar | 1997-12-31 | 2026-11-13 |
+| Daily market cap | Sharadar | 1998-12-01 | 2026-11-13 |
+| Quarterly fundamentals | Sharadar | 1990-06 | 2026-11-13 |
+| 8-K filings | Sharadar | 1993-11-08 | 2026-11-13 |
+| Daily Fama-French factors | Ken French | 1926-07-01 | 2026-09-30 |
+
+Market cap is the binding constraint: the first universe is formed on 1998-12-31, so the first
+holding month is 1999-01. The last holding month is 2026-10.
+
+| Signal | Holding months | Count |
+|---|---|---|
+| Momentum, short-term reversal, low volatility | 1999-01 to 2026-10 | 334 |
+| Post-earnings drift | 2000-09 to 2026-10 | 310 |
+
+Post-earnings drift has no portfolio in four months inside its range (2001-03, 2002-03, 2003-03,
+2004-03): at the end of those Februaries less than half of the universe had a valid score.
+
 ## Results so far (before costs)
 
-Long-short portfolios, equal-weighted, monthly rebalancing. "Beta" is the slope of the long-short
-return on the market excess return.
+Long-short portfolios, equal-weighted, monthly rebalancing. "Ex-post beta" is the slope of the
+realized long-short return on the market excess return over the full sample; it is measured after
+the fact and is not the stock beta used to build the neutral scores.
 
-| Signal | Universe | Version | Mean per month | t-stat | Annual Sharpe | Max drawdown | Beta |
+| Signal | Universe | Version | Mean per month | t-stat | Annual Sharpe | Max drawdown | Ex-post beta |
 |---|---|---|---|---|---|---|---|
 | Momentum | top 500 | raw | 0.91% | 1.93 | 0.37 | -73% | -0.27 |
 | | | neutral | 0.43% | 2.17 | 0.41 | -41% | -0.15 |
@@ -49,8 +73,6 @@ return on the market excess return.
 | | | neutral | 0.16% | 1.34 | 0.26 | -22% | -0.08 |
 | Post-earnings drift | top 3000 | raw | 0.38% | 2.19 | 0.43 | -31% | -0.27 |
 | | | neutral | 0.29% | 2.89 | 0.57 | -17% | -0.08 |
-
-Momentum, reversal and low volatility start in 1999-01; post-earnings drift starts in 2000-09.
 
 Raw signals:
 
@@ -79,7 +101,7 @@ Equal-weighted results are barely affected, which is one reason the portfolios a
 - No transaction costs yet.
 - No delisting returns: a stock with no price in the holding month is dropped (about 0.4% of stock-months).
 - The security category (common stock, ADR, ...) and the sector are the current ones, not point-in-time.
-- Neutralizing the score does not make the portfolio exactly neutral; the remaining beta is in the table.
+- Neutralizing the score does not make the portfolio exactly neutral; the remaining ex-post beta is in the table.
 - The neutral results depend on the exact method: neutral momentum in the top 3000 has a t-stat of 2.4
   with one beta slope for all sectors and 1.6 with one slope per sector (the version used).
 - PEAD uses last year's same quarter as expected earnings, not analyst forecasts. Before 2004 the
