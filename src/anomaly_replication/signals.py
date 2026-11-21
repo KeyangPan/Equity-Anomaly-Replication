@@ -131,13 +131,28 @@ def load_earnings_announcements() -> pd.DataFrame:
     return announcements[["ticker", "announcement_date", "sue"]].reset_index(drop=True)
 
 
-def post_earnings_drift(month_ends: pd.DatetimeIndex, months_valid: int = 3) -> pd.DataFrame:
-    """Post-earnings-announcement drift (Bernard and Thomas 1989): the latest earnings surprise.
+# Post-earnings drift: how long a surprise is used and how fast it fades.
+PEAD_MONTHS_VALID = 3  # a surprise is used at no more than 3 month-ends
+PEAD_HALF_LIFE_DAYS = 20  # it counts 50% after 20 days, 25% after 40, ...
+PEAD_MAX_AGE_DAYS = 90  # and not at all once it is older than 90 days
 
-    score_t = SUE of the most recent announcement made before month-end t,
-              if that announcement is at most `months_valid` month-ends old.
 
-    Three months is roughly the 60 trading days over which the paper measures the drift.
+def post_earnings_drift(month_ends: pd.DatetimeIndex) -> pd.DataFrame:
+    """Post-earnings-announcement drift (Bernard and Thomas 1989): the latest earnings surprise,
+    fading with its age.
+
+    With x = calendar days from the most recent announcement before month-end t to month-end t:
+
+        score_t = SUE * 0.5 ** (x / PEAD_HALF_LIFE_DAYS)
+
+    The surprise counts half after 20 days, a quarter after 40, and so on. An old surprise is
+    pulled towards zero, the middle of the cross-section, so the top and bottom groups hold mostly
+    recent announcements.
+
+    No score when the announcement is more than PEAD_MONTHS_VALID month-ends old or more than
+    PEAD_MAX_AGE_DAYS days old. Three months is roughly the 60 trading days over which the paper
+    measures the drift. (The paper keeps the full surprise for the whole window; we do not test
+    that version.)
     """
     announcements = load_earnings_announcements()
 
@@ -149,9 +164,17 @@ def post_earnings_drift(month_ends: pd.DatetimeIndex, months_valid: int = 3) -> 
     # If a stock has two announcements before the same month-end, keep the later one.
     announcements = announcements.sort_values("announcement_date")
     announcements = announcements.drop_duplicates(["date", "ticker"], keep="last")
-    signal = announcements.pivot(index="date", columns="ticker", values="sue")
 
-    # Carry each surprise forward so it is used at `months_valid` month-ends in total.
-    signal = signal.reindex(month_ends)
-    signal.index.name = "date"
-    return signal.ffill(limit=months_valid - 1)
+    # Carry each surprise, and its announcement date, forward to PEAD_MONTHS_VALID month-ends in total.
+    def carry_forward(values: str) -> pd.DataFrame:
+        table = announcements.pivot(index="date", columns="ticker", values=values)
+        table = table.reindex(month_ends).ffill(limit=PEAD_MONTHS_VALID - 1)
+        table.index.name = "date"
+        return table
+
+    sue = carry_forward("sue")
+    announced = carry_forward("announcement_date")
+    days_since = announced.rsub(month_ends.to_series(), axis=0).apply(lambda column: column.dt.days)
+
+    sue = sue.where(days_since <= PEAD_MAX_AGE_DAYS)
+    return sue * 0.5 ** (days_since / PEAD_HALF_LIFE_DAYS)

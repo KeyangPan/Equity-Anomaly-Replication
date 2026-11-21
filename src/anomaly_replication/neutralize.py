@@ -79,14 +79,16 @@ def neutralize(
 
     At each month-end, separately inside each sector of the universe:
       1. rank the scores and scale the rank to between 0 and 1 (0 = lowest score of the sector,
-         1 = highest). Every sector now has the same spread of ranks, so no sector is
-         over-represented among the highest or lowest values.
-      2. regress the rank on beta, with the sector's own intercept a and slope c:
+         1 = highest),
+      2. turn the rank into a z-score: subtract the sector's average rank and divide by the
+         sector's standard deviation of ranks. Every sector now has mean 0 and standard deviation 1,
+         so no sector is over-represented among the highest or lowest values.
+      3. regress the z-score on beta, with the sector's own intercept a and slope c:
 
-             rank_i = a + c * beta_i + residual_i
+             z_i = a + c * beta_i + residual_i
 
          (betas beyond the month's 1st or 99th percentile are first pulled in to that percentile),
-      3. the residual is the new score.
+      4. the residual is the new score.
 
     Inside every sector the residual averages zero and is uncorrelated with beta. A high value
     means "high score compared with stocks of the same sector and the same beta".
@@ -105,6 +107,10 @@ def neutralize(
     by_sector = table.groupby(["date", "sector"])["score"]
     table["rank"] = (by_sector.rank() - 0.5) / by_sector.transform("size")
 
+    # Z-score of the rank inside each (date, sector): mean 0 and standard deviation 1 in every sector.
+    rank_by_sector = table.groupby(["date", "sector"])["rank"]
+    table["z"] = (table["rank"] - rank_by_sector.transform("mean")) / rank_by_sector.transform("std")
+
     # A few estimated betas are extreme (data errors, tiny stocks). Pull them in to the
     # 1st and 99th percentile of the month so they do not drive the regression.
     lowest = table.groupby("date")["beta"].transform(lambda beta: beta.quantile(0.01))
@@ -112,13 +118,13 @@ def neutralize(
     table["beta"] = table["beta"].clip(lower=lowest, upper=highest)
 
     # One-variable regression inside each (date, sector), written out:
-    #     c = sum(beta_dev * rank_dev) / sum(beta_dev^2),   residual = rank_dev - c * beta_dev
+    #     c = sum(beta_dev * z_dev) / sum(beta_dev^2),   residual = z_dev - c * beta_dev
     # where "_dev" means the value minus its average in the (date, sector) group.
     groups = [table["date"], table["sector"]]
     beta_dev = table["beta"] - table["beta"].groupby(groups).transform("mean")
-    rank_dev = table["rank"] - table["rank"].groupby(groups).transform("mean")
-    slope = (beta_dev * rank_dev).groupby(groups).transform("sum") / (beta_dev**2).groupby(groups).transform("sum")
-    table["neutral_score"] = rank_dev - slope * beta_dev
+    z_dev = table["z"] - table["z"].groupby(groups).transform("mean")
+    slope = (beta_dev * z_dev).groupby(groups).transform("sum") / (beta_dev**2).groupby(groups).transform("sum")
+    table["neutral_score"] = z_dev - slope * beta_dev
     table = table.dropna(subset=["neutral_score"])  # a sector with a single stock has no slope
 
     return table.pivot(index="date", columns="ticker", values="neutral_score")
