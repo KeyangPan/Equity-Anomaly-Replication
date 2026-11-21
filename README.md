@@ -3,7 +3,8 @@
 Replication of four published cross-sectional anomalies in US equities, 2006 to 2026:
 how much of their return is still there after publication.
 
-Work in progress. Transaction costs are not included yet.
+Work in progress. Results are shown before and after trading costs and borrowing fees, with an
+estimate of how large a fund can run the combined portfolio.
 
 ## Signals
 
